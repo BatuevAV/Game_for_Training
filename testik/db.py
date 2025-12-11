@@ -100,6 +100,30 @@ class GameSessionDB(Base):
     performance_score: Mapped[float] = mapped_column(Integer, default=0)
 
 
+class AchievementDB(Base):
+    __tablename__ = "achievements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(String(512))
+    category: Mapped[str] = mapped_column(String(50))
+    icon: Mapped[str] = mapped_column(String(255))
+    rarity: Mapped[Rarity] = mapped_column(Enum(Rarity), nullable=False)
+    requirement: Mapped[dict] = mapped_column(JSON)
+    reward_xp: Mapped[int] = mapped_column(Integer, default=0)
+    reward_coins: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class UserAchievementDB(Base):
+    __tablename__ = "user_achievements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    achievement_id: Mapped[int] = mapped_column(Integer, ForeignKey("achievements.id"))
+    unlocked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    progress: Mapped[float] = mapped_column(Integer, default=1.0)
+
+
 engine = create_engine(DATABASE_URL) if DATABASE_URL else None
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False) if engine else None
 

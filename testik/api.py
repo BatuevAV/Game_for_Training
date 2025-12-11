@@ -328,6 +328,98 @@ def _roll_reward(user_id: int, perf: float) -> Optional[UserMosquito]:
     return user_mosquito
 
 
+def _check_and_unlock_achievements(
+    user_id: int, 
+    performance_score: float,
+    game_result: dict,
+) -> List[int]:
+    """
+    Проверить и разблокировать новые достижения после завершения игры.
+    Возвращает список ID разблокированных достижений.
+    """
+    from .domain.achievements import get_newly_unlocked_achievements
+    
+    if not USE_DB or not db_mod.SessionLocal:
+        return []
+    
+    with db_mod.SessionLocal() as session:
+        # Получаем данные пользователя
+        user_db = session.get(db_mod.UserDB, user_id)
+        if not user_db:
+            return []
+        
+        skills_db = session.get(db_mod.SkillStatsDB, user_id)
+        if not skills_db:
+            return []
+        
+        user = User(
+            id=user_db.id,
+            telegram_id=user_db.telegram_id,
+            username=user_db.username,
+            created_at=user_db.created_at,
+            last_active_at=user_db.last_active_at,
+            is_premium=user_db.is_premium,
+        )
+        
+        skills = SkillStats(
+            user_id=skills_db.user_id,
+            memory_level=skills_db.memory_level,
+            memory_xp=skills_db.memory_xp,
+            reaction_level=skills_db.reaction_level,
+            reaction_xp=skills_db.reaction_xp,
+            daily_streak=skills_db.daily_streak,
+            last_training_date=skills_db.last_training_date,
+        )
+        
+        # Получаем уже разблокированные достижения
+        unlocked = session.query(db_mod.UserAchievementDB).filter(
+            db_mod.UserAchievementDB.user_id == user_id
+        ).all()
+        unlocked_ids = [ua.achievement_id for ua in unlocked]
+        
+        # Считаем общее количество игр
+        total_games = session.query(db_mod.GameSessionDB).filter(
+            db_mod.GameSessionDB.user_id == user_id
+        ).count()
+        
+        # Формируем данные последней игры для проверки достижений
+        last_game_result = {
+            "performance_score": performance_score,
+            **game_result
+        }
+        
+        # Проверяем новые достижения
+        newly_unlocked = get_newly_unlocked_achievements(
+            user=user,
+            skills=skills,
+            total_games=total_games,
+            unlocked_achievement_ids=unlocked_ids,
+            last_game_result=last_game_result,
+        )
+        
+        # Сохраняем новые достижения
+        new_achievement_ids = []
+        for achievement in newly_unlocked:
+            user_ach = db_mod.UserAchievementDB(
+                user_id=user_id,
+                achievement_id=achievement.id,
+                unlocked_at=datetime.utcnow(),
+                progress=1.0,
+            )
+            session.add(user_ach)
+            new_achievement_ids.append(achievement.id)
+            
+            # Начисляем награду за достижение
+            if achievement.reward_xp > 0:
+                skills_db.memory_xp += achievement.reward_xp // 2
+                skills_db.reaction_xp += achievement.reward_xp // 2
+        
+        if new_achievement_ids:
+            session.commit()
+        
+        return new_achievement_ids
+
+
 # --- Pydantic schemas ---
 
 
@@ -675,6 +767,9 @@ def finish_session(payload: GameSessionFinishRequest) -> GameSessionFinishRespon
             source=reward.source,
         )
 
+    # Проверяем новые достижения
+    _check_and_unlock_achievements(user_id, gain.performance_score, payload.result)
+
     return GameSessionFinishResponse(
         updated_skills=_build_skill_out(stats),
         gained_xp=gain,
@@ -846,6 +941,132 @@ def set_premium(payload: SetPremiumRequest) -> SetPremiumResponse:
         success=True,
         user=_build_user_out(user),
         message=f"{status_msg} для пользователя {user.username or user.telegram_id}",
+    )
+
+
+# --- Achievements Endpoints ---
+
+
+class AchievementOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    category: str
+    icon: str
+    rarity: str
+    reward_xp: int
+    reward_coins: int
+    progress: Optional[float] = None
+    unlocked_at: Optional[datetime] = None
+
+
+class AchievementsResponse(BaseModel):
+    achievements: List[AchievementOut]
+    total: int
+    unlocked_count: int
+
+
+@app.get("/achievements", response_model=List[AchievementOut])
+def list_achievements() -> List[AchievementOut]:
+    """Получить список всех доступных достижений."""
+    from .domain.achievements import PREDEFINED_ACHIEVEMENTS
+    
+    return [
+        AchievementOut(
+            id=ach.id,
+            name=ach.name,
+            description=ach.description,
+            category=ach.category.value,
+            icon=ach.icon,
+            rarity=ach.rarity.value,
+            reward_xp=ach.reward_xp,
+            reward_coins=ach.reward_coins,
+        )
+        for ach in PREDEFINED_ACHIEVEMENTS
+    ]
+
+
+@app.get("/achievements/user/{user_id}", response_model=AchievementsResponse)
+def get_user_achievements(user_id: int) -> AchievementsResponse:
+    """Получить достижения пользователя с прогрессом."""
+    from .domain.achievements import PREDEFINED_ACHIEVEMENTS, calculate_achievement_progress
+    
+    # Получаем пользователя и его статистику
+    if USE_DB and db_mod.SessionLocal is not None:
+        with db_mod.SessionLocal() as session:
+            user_db = session.get(db_mod.UserDB, user_id)
+            if not user_db:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            skills_db = session.get(db_mod.SkillStatsDB, user_id)
+            if not skills_db:
+                raise HTTPException(status_code=404, detail="Skills not found")
+            
+            user = User(
+                id=user_db.id,
+                telegram_id=user_db.telegram_id,
+                username=user_db.username,
+                created_at=user_db.created_at,
+                last_active_at=user_db.last_active_at,
+                is_premium=user_db.is_premium,
+            )
+            
+            skills = SkillStats(
+                user_id=skills_db.user_id,
+                memory_level=skills_db.memory_level,
+                memory_xp=skills_db.memory_xp,
+                reaction_level=skills_db.reaction_level,
+                reaction_xp=skills_db.reaction_xp,
+                daily_streak=skills_db.daily_streak,
+                last_training_date=skills_db.last_training_date,
+            )
+            
+            # Получаем разблокированные достижения
+            unlocked = session.query(db_mod.UserAchievementDB).filter(
+                db_mod.UserAchievementDB.user_id == user_id
+            ).all()
+            unlocked_ids = {ua.achievement_id for ua in unlocked}
+            unlocked_map = {ua.achievement_id: ua for ua in unlocked}
+            
+            # Подсчитываем общее количество игр
+            total_games = session.query(db_mod.GameSessionDB).filter(
+                db_mod.GameSessionDB.user_id == user_id
+            ).count()
+    else:
+        user = _users.get(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        skills = _get_skill_stats(user_id)
+        unlocked_ids = set()
+        unlocked_map = {}
+        total_games = 0
+    
+    # Формируем список достижений с прогрессом
+    achievements_out = []
+    for ach in PREDEFINED_ACHIEVEMENTS:
+        progress = calculate_achievement_progress(ach, user, skills, total_games)
+        unlocked_data = unlocked_map.get(ach.id)
+        
+        achievements_out.append(
+            AchievementOut(
+                id=ach.id,
+                name=ach.name,
+                description=ach.description,
+                category=ach.category.value,
+                icon=ach.icon,
+                rarity=ach.rarity.value,
+                reward_xp=ach.reward_xp,
+                reward_coins=ach.reward_coins,
+                progress=progress if not unlocked_data else 1.0,
+                unlocked_at=unlocked_data.unlocked_at if unlocked_data else None,
+            )
+        )
+    
+    return AchievementsResponse(
+        achievements=achievements_out,
+        total=len(PREDEFINED_ACHIEVEMENTS),
+        unlocked_count=len(unlocked_ids),
     )
 
 

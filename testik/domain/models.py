@@ -97,3 +97,36 @@ class GameSession:
     gained_reaction_xp: int
     performance_score: float
 
+
+class AchievementCategory(str, Enum):
+    STREAK = "streak"          # Серии дней
+    LEVEL = "level"            # Достижение уровней
+    GAMES = "games"            # Количество игр
+    PERFORMANCE = "performance"  # Производительность
+    COLLECTION = "collection"    # Коллекция комариков
+    SPECIAL = "special"        # Особые достижения
+
+
+@dataclass
+class Achievement:
+    """Шаблон достижения"""
+    id: int
+    name: str
+    description: str
+    category: AchievementCategory
+    icon: str
+    rarity: Rarity
+    requirement: Dict  # Условие для получения (например: {"streak": 7})
+    reward_xp: int = 0
+    reward_coins: int = 0  # Для будущей валюты
+
+
+@dataclass
+class UserAchievement:
+    """Полученное достижение пользователя"""
+    id: int
+    user_id: int
+    achievement_id: int
+    unlocked_at: datetime
+    progress: float = 1.0  # От 0.0 до 1.0
+
