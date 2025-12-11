@@ -239,6 +239,81 @@ alembic revision --autogenerate -m "Description"
 alembic revision -m "Description"
 ```
 
+## Утилиты управления
+
+### Быстрый старт (через manage.sh)
+
+```bash
+# Показать справку
+./manage.sh help
+
+# Просмотр пользователей
+./manage.sh users                    # Все пользователи
+./manage.sh find 1                   # По User ID
+./manage.sh find 997743143          # По Telegram ID
+./manage.sh find sankaapelsin       # По username
+./manage.sh check 997743143         # Детальная проверка
+
+# Управление Premium
+./manage.sh premium 997743143 on    # Включить Premium
+./manage.sh premium 997743143 off   # Выключить Premium
+
+# Запуск сервера и админки
+./manage.sh server                   # Запустить API сервер
+./manage.sh admin                    # Открыть админ-панель
+
+# Миграции
+./manage.sh migrate                  # Применить миграции
+```
+
+### Напрямую через Python скрипты
+
+```bash
+# Показать всех пользователей
+./venv/bin/python3 list_users.py
+
+# Найти конкретного пользователя
+./venv/bin/python3 find_user.py --user-id 1
+./venv/bin/python3 find_user.py --telegram-id 997743143
+./venv/bin/python3 find_user.py --username sankaapelsin
+
+# Проверить статус пользователя
+./venv/bin/python3 check_user.py 997743143
+```
+
+### Управление Premium подпиской
+
+**Через командную строку:**
+```bash
+# Активировать Premium
+./venv/bin/python3 update_premium.py 997743143 true
+
+# Деактивировать Premium
+./venv/bin/python3 update_premium.py 997743143 false
+```
+
+**Через веб-интерфейс:**
+1. Запустите API: `uvicorn testik.api:app --reload`
+2. Откройте админ-панель: http://127.0.0.1:8000/admin
+3. Введите User ID пользователя
+4. Нажмите нужную кнопку
+
+**Через API:**
+```bash
+curl -X POST http://127.0.0.1:8000/admin/set-premium \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": 1, "is_premium": true}'
+```
+
+**Напрямую через SQL:**
+```sql
+-- По Telegram ID
+UPDATE users SET is_premium = true WHERE telegram_id = 997743143;
+
+-- По User ID
+UPDATE users SET is_premium = true WHERE id = 1;
+```
+
 ## Deployment
 
 ### Docker (TODO)

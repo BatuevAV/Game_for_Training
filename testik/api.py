@@ -788,6 +788,79 @@ def get_progress_history(user_id: int, days: int = 30) -> ProgressHistoryOut:
     )
 
 
+# --- Premium Management Endpoints ---
+
+
+class SetPremiumRequest(BaseModel):
+    user_id: int
+    is_premium: bool
+
+
+class SetPremiumResponse(BaseModel):
+    success: bool
+    user: UserOut
+    message: str
+
+
+@app.post("/admin/set-premium", response_model=SetPremiumResponse)
+def set_premium(payload: SetPremiumRequest) -> SetPremiumResponse:
+    """
+    Установить или снять Premium статус для пользователя.
+    В production это должно быть защищено авторизацией админа.
+    """
+    if USE_DB and db_mod.SessionLocal is not None:
+        with db_mod.SessionLocal() as session:
+            user_db = session.get(db_mod.UserDB, payload.user_id)
+            if not user_db:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            old_status = user_db.is_premium
+            user_db.is_premium = payload.is_premium
+            session.commit()
+            
+            user = User(
+                id=user_db.id,
+                telegram_id=user_db.telegram_id,
+                username=user_db.username,
+                created_at=user_db.created_at,
+                last_active_at=user_db.last_active_at,
+                is_premium=user_db.is_premium,
+            )
+            
+            status_msg = "Premium активирован" if payload.is_premium else "Premium деактивирован"
+            return SetPremiumResponse(
+                success=True,
+                user=_build_user_out(user),
+                message=f"{status_msg} для пользователя {user.username or user.telegram_id}",
+            )
+    
+    # In-memory version
+    user = _users.get(payload.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.is_premium = payload.is_premium
+    status_msg = "Premium активирован" if payload.is_premium else "Premium деактивирован"
+    
+    return SetPremiumResponse(
+        success=True,
+        user=_build_user_out(user),
+        message=f"{status_msg} для пользователя {user.username or user.telegram_id}",
+    )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_panel() -> str:
+    """Админ-панель для управления пользователями и Premium подписками."""
+    import os
+    admin_html_path = os.path.join(os.path.dirname(__file__), "..", "admin.html")
+    try:
+        with open(admin_html_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "<h1>Admin panel not found</h1>"
+
+
 @app.get("/webapp", response_class=HTMLResponse)
 def webapp() -> str:
     """

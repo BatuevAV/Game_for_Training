@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель - Комарики</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        
+        .section h2 {
+            color: #444;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .btn-check {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-check:hover {
+            background: #45a049;
+        }
+        
+        .btn-premium {
+            background: #FFD700;
+            color: #333;
+        }
+        
+        .btn-premium:hover {
+            background: #FFC700;
+        }
+        
+        .btn-free {
+            background: #ff5722;
+            color: white;
+        }
+        
+        .btn-free:hover {
+            background: #f4511e;
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .user-info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .info-value {
+            color: #333;
+        }
+        
+        .premium-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .premium-badge.premium {
+            background: #FFD700;
+            color: #333;
+        }
+        
+        .premium-badge.free {
+            background: #e0e0e0;
+            color: #666;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦟 Админ-панель Комарики</h1>
+        <p class="subtitle">Управление пользователями и Premium подписками</p>
+        
+        <div class="section">
+            <h2>Проверить пользователя</h2>
+            <div class="form-group">
+                <label for="checkUserId">User ID:</label>
+                <input type="number" id="checkUserId" placeholder="Введите User ID">
+            </div>
+            <button class="btn-check" onclick="checkUser()">🔍 Проверить</button>
+            
+            <div id="checkResult" class="result"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Управление Premium</h2>
+            <div class="form-group">
+                <label for="premiumUserId">User ID:</label>
+                <input type="number" id="premiumUserId" placeholder="Введите User ID">
+            </div>
+            <div class="button-group">
+                <button class="btn-premium" onclick="setPremium(true)">⭐ Активировать Premium</button>
+                <button class="btn-free" onclick="setPremium(false)">❌ Деактивировать Premium</button>
+            </div>
+            
+            <div id="premiumResult" class="result"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        
+        function showResult(elementId, message, isSuccess) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = 'result ' + (isSuccess ? 'success' : 'error');
+            el.style.display = 'block';
+        }
+        
+        function showUserInfo(elementId, user, skills) {
+            const el = document.getElementById(elementId);
+            const isPremium = user.is_premium;
+            
+            const html = `
+                <div class="user-info">
+                    <div class="info-row">
+                        <span class="info-label">ID:</span>
+                        <span class="info-value">${user.id}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Telegram ID:</span>
+                        <span class="info-value">${user.telegram_id}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Username:</span>
+                        <span class="info-value">${user.username || 'N/A'}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Статус:</span>
+                        <span class="info-value">
+                            <span class="premium-badge ${isPremium ? 'premium' : 'free'}">
+                                ${isPremium ? '⭐ Premium' : '🆓 Free'}
+                            </span>
+                        </span>
+                    </div>
+                    ${skills ? `
+                    <div class="info-row">
+                        <span class="info-label">Память:</span>
+                        <span class="info-value">Уровень ${skills.memory_level} (${skills.memory_xp} XP)</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Реакция:</span>
+                        <span class="info-value">Уровень ${skills.reaction_level} (${skills.reaction_xp} XP)</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Серия:</span>
+                        <span class="info-value">${skills.daily_streak} дней</span>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            
+            el.innerHTML = html;
+            el.className = 'result success';
+            el.style.display = 'block';
+        }
+        
+        async function checkUser() {
+            const userId = document.getElementById('checkUserId').value;
+            if (!userId) {
+                showResult('checkResult', 'Введите User ID', false);
+                return;
+            }
+            
+            showResult('checkResult', 'Загрузка...', true);
+            
+            try {
+                const response = await fetch(`${API_BASE}/me?user_id=${userId}`);
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    showResult('checkResult', error.detail || 'Пользователь не найден', false);
+                    return;
+                }
+                
+                const data = await response.json();
+                showUserInfo('checkResult', data.user, data.skills);
+                
+            } catch (error) {
+                showResult('checkResult', 'Ошибка подключения к серверу', false);
+                console.error(error);
+            }
+        }
+        
+        async function setPremium(isPremium) {
+            const userId = document.getElementById('premiumUserId').value;
+            if (!userId) {
+                showResult('premiumResult', 'Введите User ID', false);
+                return;
+            }
+            
+            showResult('premiumResult', 'Обработка...', true);
+            
+            try {
+                const response = await fetch(`${API_BASE}/admin/set-premium`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_id: parseInt(userId),
+                        is_premium: isPremium
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    showResult('premiumResult', error.detail || 'Ошибка при обновлении статуса', false);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult('premiumResult', `✅ ${data.message}`, true);
+                
+                // Обновляем информацию о пользователе
+                setTimeout(() => {
+                    document.getElementById('checkUserId').value = userId;
+                    checkUser();
+                }, 500);
+                
+            } catch (error) {
+                showResult('premiumResult', 'Ошибка подключения к серверу', false);
+                console.error(error);
+            }
+        }
+        
+        // Enter для отправки
+        document.getElementById('checkUserId').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') checkUser();
+        });
+        
+        document.getElementById('premiumUserId').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') setPremium(true);
+        });
+    </script>
+</body>
+</html>
