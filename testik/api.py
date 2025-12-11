@@ -33,6 +33,12 @@ from .domain.models import (
     UserMosquito,
 )
 from .domain.xp import XpGain, compute_xp_for_game, skill_xp_to_next
+from .domain.leaderboard import (
+    LeaderboardType,
+    TimePeriod,
+    LeaderboardEntry,
+    get_leaderboard,
+)
 from . import db as db_mod
 
 
@@ -965,6 +971,83 @@ class AchievementsResponse(BaseModel):
     total: int
     unlocked_count: int
 
+
+# ============================================================================
+# LEADERBOARD MODELS & ENDPOINTS
+# ============================================================================
+
+class LeaderboardEntryOut(BaseModel):
+    rank: int
+    user_id: int
+    telegram_id: int
+    username: Optional[str]
+    first_name: Optional[str]
+    value: int
+    is_premium: bool
+
+
+class LeaderboardResponse(BaseModel):
+    entries: List[LeaderboardEntryOut]
+    total: int
+    leaderboard_type: str
+    time_period: str
+
+
+@app.get("/leaderboard", response_model=LeaderboardResponse)
+def get_leaderboard_endpoint(
+    type: LeaderboardType = LeaderboardType.TOTAL_XP,
+    period: TimePeriod = TimePeriod.ALL_TIME,
+    limit: int = 100,
+    user_id: Optional[int] = None
+) -> LeaderboardResponse:
+    """
+    Получить таблицу лидеров.
+    
+    Parameters:
+    - type: тип рейтинга (total_xp, memory_level, reaction_level, games_played, current_streak)
+    - period: период времени (all_time, weekly, monthly)
+    - limit: максимальное количество записей (по умолчанию 100)
+    - user_id: ID пользователя для включения в результаты, даже если не в топе
+    """
+    if not USE_DB:
+        raise HTTPException(status_code=501, detail="Database not configured")
+    
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 1000")
+    
+    with db_mod.Session() as session:
+        entries = get_leaderboard(
+            session=session,
+            leaderboard_type=type,
+            time_period=period,
+            limit=limit,
+            user_id=user_id
+        )
+        
+        entries_out = [
+            LeaderboardEntryOut(
+                rank=entry.rank,
+                user_id=entry.user_id,
+                telegram_id=entry.telegram_id,
+                username=entry.username,
+                first_name=entry.first_name,
+                value=entry.value,
+                is_premium=entry.is_premium
+            )
+            for entry in entries
+        ]
+        
+        return LeaderboardResponse(
+            entries=entries_out,
+            total=len(entries_out),
+            leaderboard_type=type.value,
+            time_period=period.value
+        )
+
+
+# ============================================================================
+# ACHIEVEMENTS ENDPOINTS
+# ============================================================================
 
 @app.get("/achievements", response_model=List[AchievementOut])
 def list_achievements() -> List[AchievementOut]:
