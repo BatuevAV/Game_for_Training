@@ -26,6 +26,7 @@ class User:
     username: Optional[str]
     created_at: datetime
     last_active_at: datetime
+    is_premium: bool = False
 
 
 @dataclass
@@ -95,5 +96,4 @@ class GameSession:
     gained_memory_xp: int
     gained_reaction_xp: int
     performance_score: float
-
 

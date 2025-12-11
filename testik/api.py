@@ -43,6 +43,10 @@ app = FastAPI(title="Комарики API", version="0.1.0")
 
 USE_DB = db_mod.engine is not None
 
+# Monetization / limits (for free users)
+FREE_DAILY_GAMES_LIMIT = 8
+PREMIUM_XP_MULTIPLIER = 1.5
+
 _users: Dict[int, User] = {}
 _skill_stats: Dict[int, SkillStats] = {}
 _mosquito_types: Dict[int, MosquitoType] = {}
@@ -155,6 +159,7 @@ def _get_or_create_user(telegram_id: int, username: Optional[str]) -> User:
                     username=existing.username,
                     created_at=existing.created_at,
                     last_active_at=existing.last_active_at,
+                    is_premium=existing.is_premium,
                 )
 
             user_db = db_mod.UserDB(
@@ -176,6 +181,7 @@ def _get_or_create_user(telegram_id: int, username: Optional[str]) -> User:
                 username=user_db.username,
                 created_at=user_db.created_at,
                 last_active_at=user_db.last_active_at,
+                is_premium=user_db.is_premium,
             )
 
     for user in _users.values():
@@ -329,6 +335,7 @@ class UserOut(BaseModel):
     id: int
     telegram_id: int
     username: Optional[str]
+    is_premium: bool = False
 
 
 class SkillStatsOut(BaseModel):
@@ -426,7 +433,12 @@ def _build_skill_out(stats: SkillStats) -> SkillStatsOut:
 
 
 def _build_user_out(user: User) -> UserOut:
-    return UserOut(id=user.id, telegram_id=user.telegram_id, username=user.username)
+    return UserOut(
+        id=user.id,
+        telegram_id=user.telegram_id,
+        username=user.username,
+        is_premium=getattr(user, "is_premium", False),
+    )
 
 
 # --- Endpoints ---
@@ -462,6 +474,7 @@ def get_me(user_id: int) -> MeResponse:
                 username=user_db.username,
                 created_at=user_db.created_at,
                 last_active_at=user_db.last_active_at,
+                is_premium=user_db.is_premium,
             )
             return MeResponse(
                 user=_build_user_out(user),
@@ -553,6 +566,26 @@ def start_session(payload: GameSessionStartRequest) -> GameSessionStartResponse:
             user_db = session.get(db_mod.UserDB, payload.user_id)
             if not user_db:
                 raise HTTPException(status_code=404, detail="User not found")
+            if not user_db.is_premium:
+                today = date.today()
+                since_dt = datetime.combine(today, datetime.min.time())
+                games_today = (
+                    session.query(db_mod.GameSessionDB)
+                    .filter(
+                        db_mod.GameSessionDB.user_id == payload.user_id,
+                        db_mod.GameSessionDB.started_at >= since_dt,
+                    )
+                    .count()
+                )
+                if games_today >= FREE_DAILY_GAMES_LIMIT:
+                    raise HTTPException(
+                        status_code=429,
+                        detail={
+                            "error": "daily_limit_exceeded",
+                            "limit": FREE_DAILY_GAMES_LIMIT,
+                            "used": games_today,
+                        },
+                    )
     else:
         if payload.user_id not in _users:
             raise HTTPException(status_code=404, detail="User not found")
@@ -590,6 +623,13 @@ def finish_session(payload: GameSessionFinishRequest) -> GameSessionFinishRespon
     user_id = session_data["user_id"]
     game_type: GameType = session_data["game_type"]
 
+    is_premium = False
+    if USE_DB and db_mod.SessionLocal is not None:
+        with db_mod.SessionLocal() as db_session:
+            user_db = db_session.get(db_mod.UserDB, user_id)
+            if user_db:
+                is_premium = bool(user_db.is_premium)
+
     stats = _get_skill_stats(user_id)
     _update_daily_streak(stats, today=date.today())
 
@@ -598,6 +638,11 @@ def finish_session(payload: GameSessionFinishRequest) -> GameSessionFinishRespon
         result=payload.result,
         daily_streak=stats.daily_streak,
     )
+
+    if is_premium:
+        gain.memory_xp = int(round(gain.memory_xp * PREMIUM_XP_MULTIPLIER))
+        gain.reaction_xp = int(round(gain.reaction_xp * PREMIUM_XP_MULTIPLIER))
+
     _apply_xp(stats, gain)
 
     reward = _roll_reward(user_id, gain.performance_score)
@@ -1029,6 +1074,7 @@ def webapp() -> str:
         reactOptions: [],
         reactCorrectIndex: null,
         reactRoundStart: null,
+        dailyLimitReached: false,
       };
 
       function shuffle(array) {
@@ -1143,6 +1189,8 @@ def webapp() -> str:
         try {
           let tgUserId = 0;
           let username = "demo";
+
+          // Если мини‑апп открыт внутри Telegram — используем реального пользователя
           if (
             window.Telegram &&
             Telegram.WebApp &&
@@ -1152,31 +1200,41 @@ def webapp() -> str:
             tgUserId = Telegram.WebApp.initDataUnsafe.user.id;
             username =
               Telegram.WebApp.initDataUnsafe.user.username || "user_" + tgUserId;
+
+            state.telegramId = tgUserId;
+            state.username = username;
+
+            const resp = await fetch(apiBase + "/auth/telegram", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                telegram_id: tgUserId,
+                username: username,
+              }),
+            });
+            const data = await resp.json();
+            state.userId = data.user.id;
+
+            document.getElementById("user-info").textContent =
+              "Пользователь: " + (state.username || "id " + state.telegramId);
+
+            const skills = data.skills;
+            document.getElementById("skill-info").textContent =
+              "Память: " +
+              skills.memory_level +
+              " / Реакция: " +
+              skills.reaction_level;
+            await loadProgress();
+          } else {
+            // Обычный браузер: чистый демо‑режим без backend и лимитов
+            state.telegramId = null;
+            state.username = null;
+            state.userId = null;
+            document.getElementById("user-info").textContent =
+              "Пользователь: демо режим (прогресс не сохраняется)";
+            document.getElementById("skill-info").textContent =
+              "Память / Реакция: демо";
           }
-          state.telegramId = tgUserId;
-          state.username = username;
-
-          const resp = await fetch(apiBase + "/auth/telegram", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              telegram_id: tgUserId,
-              username: username,
-            }),
-          });
-          const data = await resp.json();
-          state.userId = data.user.id;
-
-          document.getElementById("user-info").textContent =
-            "Пользователь: " + (state.username || "id " + state.telegramId);
-
-          const skills = data.skills;
-          document.getElementById("skill-info").textContent =
-            "Память: " +
-            skills.memory_level +
-            " / Реакция: " +
-            skills.reaction_level;
-          await loadProgress();
         } catch (e) {
           console.error(e);
           document.getElementById("user-info").textContent =
@@ -1232,6 +1290,7 @@ def webapp() -> str:
         renderBoard();
 
         state.sessionId = null;
+        state.dailyLimitReached = false;
         if (state.userId != null) {
           try {
             const resp = await fetch(apiBase + "/game/session/start", {
@@ -1243,10 +1302,23 @@ def webapp() -> str:
                 difficulty: "easy",
               }),
             });
-            const data = await resp.json();
-            state.sessionId = data.session_id;
+            if (resp.ok) {
+              const data = await resp.json();
+              state.sessionId = data.session_id;
+            } else {
+              const err = await resp.json().catch(() => null);
+              if (err && err.detail && err.detail.error === "daily_limit_exceeded") {
+                state.dailyLimitReached = true;
+                setLog(
+                  "Лимит игр на сегодня исчерпан. Можно играть в демо, но XP не начисляется."
+                );
+              } else {
+                setLog("Не удалось начать сессию на backend. Игра в демо.");
+              }
+            }
           } catch (e) {
             console.error(e);
+            setLog("Не удалось связаться с backend. Игра в демо.");
           }
         }
       }
@@ -1298,6 +1370,13 @@ def webapp() -> str:
           mistakes: state.mistakes,
           time_ms: elapsedMs,
         };
+
+        if (state.dailyLimitReached) {
+          setLog(
+            "Лимит игр на сегодня исчерпан. Результат не сохранён, XP не начислен."
+          );
+          return;
+        }
 
         if (state.userId != null && state.sessionId != null) {
           try {
@@ -1360,6 +1439,7 @@ def webapp() -> str:
         state.seqShowing = false;
         state.seqInputIndex = 0;
         state.sessionId = null;
+        state.dailyLimitReached = false;
 
         updateStatsUI();
 
@@ -1374,10 +1454,23 @@ def webapp() -> str:
                 difficulty: "easy",
               }),
             });
-            const data = await resp.json();
-            state.sessionId = data.session_id;
+            if (resp.ok) {
+              const data = await resp.json();
+              state.sessionId = data.session_id;
+            } else {
+              const err = await resp.json().catch(() => null);
+              if (err && err.detail && err.detail.error === "daily_limit_exceeded") {
+                state.dailyLimitReached = true;
+                setLog(
+                  "Лимит игр на сегодня исчерпан. Можно играть в демо, но XP не начисляется."
+                );
+              } else {
+                setLog("Не удалось начать сессию на backend. Игра в демо.");
+              }
+            }
           } catch (e) {
             console.error(e);
+            setLog("Не удалось связаться с backend. Игра в демо.");
           }
         }
 
@@ -1470,6 +1563,13 @@ def webapp() -> str:
 
       async function finishSequenceGame(autoRestart) {
         state.seqActive = false;
+        if (state.dailyLimitReached) {
+          setLog(
+            (document.getElementById("log").textContent || "") +
+              " Лимит игр на сегодня исчерпан. Результат не сохранён."
+          );
+          return;
+        }
         const result = {
           max_sequence_length: state.seqMaxLength,
           total_correct: state.seqTotalCorrect,
@@ -1550,6 +1650,7 @@ def webapp() -> str:
         state.reactCorrectIndex = null;
         state.reactRoundStart = null;
         state.sessionId = null;
+        state.dailyLimitReached = false;
 
         updateStatsUI();
 
@@ -1564,10 +1665,23 @@ def webapp() -> str:
                 difficulty: "easy",
               }),
             });
-            const data = await resp.json();
-            state.sessionId = data.session_id;
+            if (resp.ok) {
+              const data = await resp.json();
+              state.sessionId = data.session_id;
+            } else {
+              const err = await resp.json().catch(() => null);
+              if (err && err.detail && err.detail.error === "daily_limit_exceeded") {
+                state.dailyLimitReached = true;
+                setLog(
+                  "Лимит игр на сегодня исчерпан. Можно играть в демо, но XP не начисляется."
+                );
+              } else {
+                setLog("Не удалось начать сессию на backend. Игра в демо.");
+              }
+            }
           } catch (e) {
             console.error(e);
+            setLog("Не удалось связаться с backend. Игра в демо.");
           }
         }
 
@@ -1642,6 +1756,14 @@ def webapp() -> str:
       }
 
       async function finishReactionGame() {
+        if (state.dailyLimitReached) {
+          setLog(
+            "Лимит игр на сегодня исчерпан. Результат не сохранён, XP не начислен."
+          );
+          updateStatsUI();
+          return;
+        }
+
         let avgMs = 9999;
         if (state.reactTimesMs.length) {
           const sum = state.reactTimesMs.reduce((a, b) => a + b, 0);
@@ -1760,7 +1882,10 @@ def webapp() -> str:
           }
           const data = await resp.json();
           const skills = data.skills;
-          summaryEl.textContent =
+          const user = data.user || {};
+          const isPremium = !!user.is_premium;
+
+          let summary =
             "Память " +
             skills.memory_level +
             " (XP " +
@@ -1775,6 +1900,39 @@ def webapp() -> str:
             skills.reaction_xp_to_next +
             "). Серия дней: " +
             skills.daily_streak;
+
+          const FREE_LIMIT = """ + str(FREE_DAILY_GAMES_LIMIT) + """;
+          let todayGames = 0;
+          if (data.days && data.days.length) {
+            const today = new Date();
+            const ty = today.getFullYear();
+            const tm = today.getMonth();
+            const td = today.getDate();
+            for (const d of data.days) {
+              const dt = new Date(d.date);
+              if (
+                dt.getFullYear() === ty &&
+                dt.getMonth() === tm &&
+                dt.getDate() === td
+              ) {
+                todayGames = d.games_count || 0;
+                break;
+              }
+            }
+          }
+
+          if (isPremium) {
+            summary += " • Премиум: безлимит игр и повышенный XP.";
+          } else {
+            summary +=
+              " • Бесплатный лимит: " +
+              FREE_LIMIT +
+              " игр/день, сегодня сыграно: " +
+              todayGames +
+              ".";
+          }
+
+          summaryEl.textContent = summary;
 
           listEl.innerHTML = "";
           if (!data.days || !data.days.length) {

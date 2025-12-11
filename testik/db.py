@@ -16,6 +16,7 @@ from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Enum,
@@ -25,7 +26,7 @@ from sqlalchemy import (
     create_engine,
     JSON,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from .domain.models import GameType, Rarity, Skill
 
@@ -43,6 +44,7 @@ class UserDB(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -106,4 +108,3 @@ def init_db() -> None:
     if engine is None:
         return
     Base.metadata.create_all(engine)
-
